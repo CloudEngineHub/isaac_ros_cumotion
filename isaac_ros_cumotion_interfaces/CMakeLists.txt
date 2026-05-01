@@ -42,6 +42,8 @@ set(ACTION_FILES
 
 set(SRV_FILES
 "srv/PublishStaticPlanningScene.srv"
+"srv/GetRobotDescription.srv"
+"srv/SetRobotDescription.srv"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}

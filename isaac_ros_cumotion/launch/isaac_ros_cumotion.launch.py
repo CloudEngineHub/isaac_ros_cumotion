@@ -1,5 +1,5 @@
-# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES',
-# Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
+# Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,8 @@ from ament_index_python.packages import get_package_share_directory
 import launch
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import ComposableNodeContainer
+from launch_ros.descriptions import ComposableNode
 import yaml
 
 
@@ -31,7 +32,7 @@ def read_params(pkg_name, params_dir, params_file_name):
     return yaml.safe_load(open(params_file, 'r'))
 
 
-def launch_args_from_params(pkg_name, params_dir, params_file_name,  prefix: str = None):
+def launch_args_from_params(pkg_name, params_dir, params_file_name, prefix: str = None):
     launch_args = []
     launch_configs = {}
     params = read_params(pkg_name, params_dir, params_file_name)
@@ -46,9 +47,17 @@ def launch_args_from_params(pkg_name, params_dir, params_file_name,  prefix: str
 
 
 def generate_launch_description():
-    """Launch file to bring up cumotion planner node."""
+    """
+    Launch cuMotion components.
+
+    Brings up MoveGroup and MotionPlan action servers and IK action server.
+    """
     launch_args, launch_configs = launch_args_from_params(
-        'isaac_ros_cumotion', 'params', 'isaac_ros_cumotion_params.yaml', 'cumotion_planner')
+        'isaac_ros_cumotion',
+        'params',
+        'isaac_ros_cumotion_params.yaml',
+        'cumotion_action_server',
+    )
 
     env_variables = dict(os.environ)
 
@@ -61,31 +70,38 @@ def generate_launch_description():
         })
 
     # Static planning scene server
-    static_planning_scene_server = Node(
-        package='isaac_ros_cumotion',
-        executable='static_planning_scene',
+    static_planning_scene_server = ComposableNode(
         name='static_planning_scene_server',
-        output='screen',
+        package='isaac_ros_cumotion',
+        plugin='nvidia::isaac_ros::cumotion::StaticPlanningSceneServer',
         parameters=[{
             'moveit_collision_objects_scene_file':
-                LaunchConfiguration('cumotion_planner.moveit_collision_objects_scene_file')
+                LaunchConfiguration('cumotion_action_server.moveit_collision_objects_scene_file')
         }],
-        emulate_tty=True,
     )
 
-    cumotion_planner_node = Node(
+    cumotion_planner_node = ComposableNode(
         name='cumotion_planner',
         package='isaac_ros_cumotion',
-        namespace='',
-        executable='cumotion_goal_set_planner_node',
+        plugin='nvidia::isaac_ros::cumotion::CumotionPlanner',
         parameters=[
             launch_configs
         ],
+    )
+
+    cumotion_container = ComposableNodeContainer(
+        name='cumotion_container',
+        namespace='',
+        package='rclcpp_components',
+        executable='component_container_mt',
+        composable_node_descriptions=[
+            static_planning_scene_server,
+            cumotion_planner_node,
+        ],
         output='screen',
-        env=env_variables
+        env=env_variables,
     )
 
     return launch.LaunchDescription(launch_args + [
-        static_planning_scene_server,
-        cumotion_planner_node
+        cumotion_container,
     ])

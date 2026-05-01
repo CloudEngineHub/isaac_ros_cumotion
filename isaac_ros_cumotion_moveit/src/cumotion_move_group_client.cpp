@@ -149,7 +149,6 @@ void CumotionMoveGroupClient::getGoal()
     }
     get_result_handle_ = false;
   }
-
 }
 
 void CumotionMoveGroupClient::goalResponseCallback(const GoalHandle::SharedPtr & future)

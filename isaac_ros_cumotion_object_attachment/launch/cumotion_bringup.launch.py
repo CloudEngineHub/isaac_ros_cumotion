@@ -89,16 +89,6 @@ def generate_launch_description():
             description='Radius for object surface collision spheres'
         ),
         DeclareLaunchArgument(
-            'update_link_sphere_server_segmenter',
-            default_value='segmenter_attach_object',
-            description='Update link sphere server for robot segmenter'
-        ),
-        DeclareLaunchArgument(
-            'update_link_sphere_server_planner',
-            default_value='planner_attach_object',
-            description='Update link sphere server for cumotion planner'
-        ),
-        DeclareLaunchArgument(
             'clustering_bypass',
             default_value='False',
             description='Whether to bypass clustering'
@@ -167,10 +157,6 @@ def generate_launch_description():
     search_radius = LaunchConfiguration('search_radius')
     surface_sphere_radius = LaunchConfiguration('surface_sphere_radius')
     update_esdf_on_request = LaunchConfiguration('update_esdf_on_request')
-    update_link_sphere_server_segmenter = LaunchConfiguration(
-        'update_link_sphere_server_segmenter')
-    update_link_sphere_server_planner = LaunchConfiguration(
-        'update_link_sphere_server_planner')
     clustering_bypass = LaunchConfiguration('clustering_bypass')
     action_names = LaunchConfiguration('action_names')
     time_sync_slop = LaunchConfiguration('time_sync_slop')
@@ -213,8 +199,6 @@ def generate_launch_description():
             'cumotion_planner.robot': robot,
             'cumotion_planner.urdf_path': urdf_path,
             'cumotion_planner.yml_file_path': yml_file_path,
-            'cumotion_planner.update_link_sphere_server':
-                update_link_sphere_server_planner,
         }.items()
     )
 
@@ -229,8 +213,6 @@ def generate_launch_description():
             'robot_segmenter.joint_states_topic': joint_states_topic,
             'robot_segmenter.time_sync_slop': time_sync_slop,
             'robot_segmenter.distance_threshold': distance_threshold,
-            'robot_segmenter.update_link_sphere_server':
-                update_link_sphere_server_segmenter,
             'robot_segmenter.world_depth_publish_topics': world_depth_topic,
             'robot_segmenter.depth_qos': 'SENSOR_DATA',
             'robot_segmenter.depth_info_qos': 'SENSOR_DATA',

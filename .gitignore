@@ -4,3 +4,6 @@
 # Ignore TensorRT plan files
 *.plan
 *.engine
+
+# Ignore pngs in test_data folder
+test/test_data/*.png

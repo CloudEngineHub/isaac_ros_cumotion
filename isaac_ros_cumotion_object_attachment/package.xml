@@ -21,34 +21,42 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_cumotion_object_attachment</name>
-  <version>4.3.0</version>
+  <version>4.4.0</version>
   <description>Package attaches/detaches a grasped object to robot's collision geometry</description>
   
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
   <license>Apache-2.0</license>
   <url type="website">https://developer.nvidia.com/isaac-ros-gems/</url>
   <author>Animesh Singhal</author>
+  <author>Swapnesh Wani</author>
 
-  <depend>curobo_core</depend>
-  <depend>isaac_ros_cumotion</depend>
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+
+  <depend>assimp</depend>
+  <depend>eigen</depend>
+  <depend>yaml-cpp</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>rclcpp_components</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>isaac_ros_nitros</depend>
   <depend>isaac_ros_cumotion_interfaces</depend>
-  <depend>isaac_manipulator_ros_python_utils</depend>
-  <depend>isaac_ros_cumotion_robot_description</depend>
-  <depend>isaac_ros_launch_utils</depend>
-  <depend>rclpy</depend>
-
-  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>nvblox_msgs</depend>
   
-  <build_depend>action_msgs</build_depend>
-  <build_depend>rosidl_default_generators</build_depend>
   <build_depend>isaac_ros_common</build_depend>
 
-  <test_depend>ament_copyright</test_depend>
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_pep257</test_depend>
-  <test_depend>python3-pytest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>isaac_ros_test</test_depend>
+  <test_depend>launch_testing_ament_cmake</test_depend>
 
   <export>
-    <build_type>ament_python</build_type>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

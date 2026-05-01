@@ -112,4 +112,4 @@ geometry:
           radius: 0.043
       tool0:
         - center: [0.001, 0.001, 0.05]
-          radius: -0.01
+          radius: 0.01 # NOTE: Placeholder value as negative values are not supported.
