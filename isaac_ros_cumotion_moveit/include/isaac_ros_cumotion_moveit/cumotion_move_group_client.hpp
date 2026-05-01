@@ -15,8 +15,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef ISAAC_ROS_CUMOTION_MOVE_GROUP_CLIENT_H
-#define ISAAC_ROS_CUMOTION_MOVE_GROUP_CLIENT_H
+#ifndef ISAAC_ROS_CUMOTION_MOVEIT__CUMOTION_MOVE_GROUP_CLIENT_HPP_
+#define ISAAC_ROS_CUMOTION_MOVEIT__CUMOTION_MOVE_GROUP_CLIENT_HPP_
 
 #include <future>
 #include <memory>
@@ -39,7 +39,7 @@ class CumotionMoveGroupClient
   using GoalHandle = rclcpp_action::ClientGoalHandle<moveit_msgs::action::MoveGroup>;
 
 public:
-  CumotionMoveGroupClient(const rclcpp::Node::SharedPtr & node);
+  explicit CumotionMoveGroupClient(const rclcpp::Node::SharedPtr & node);
 
   bool sendGoal();
 
@@ -78,4 +78,4 @@ private:
 }  // namespace isaac
 }  // namespace nvidia
 
-#endif  // ISAAC_ROS_CUMOTION_MOVE_GROUP_CLIENT_H
+#endif  // ISAAC_ROS_CUMOTION_MOVEIT__CUMOTION_MOVE_GROUP_CLIENT_HPP_

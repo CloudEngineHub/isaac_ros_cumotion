@@ -1,48 +1,18 @@
 /**:
   ros__parameters:
 
-    # Robot info
-    robot:  ''
-    urdf_path: ''
+    # Object attachment behavior
+    # max_overshoot: How far spheres extend beyond mesh surface (m). Larger = fewer spheres, faster.
+    max_overshoot: 0.01
 
-    # Device configuration
-    cuda_device: 0
+    # nvblox ESDF clearing configuration
+    clear_esdf_on_attach: True  # Enable/disable clearing of attached objects from ESDF when attaching
+    object_esdf_clearing_padding: [0.05, 0.05, 0.05]  # Per-side padding around objects when clearing from ESDF [x, y, z] in meters
+    
+    esdf_reference_frame: 'base_link'  # Reference frame for ESDF (must match nvblox's global_frame parameter)
+    esdf_visualize_when_clearing: True  # Trigger nvblox to republish ESDF visualization after clearing
 
-    # Time and synchronization params
-    time_sync_slop: 0.1
-    filter_depth_buffer_time: 0.07
-    tf_lookup_duration: 5.0
+    # Robot description service names (must match cumotion_planner service names)
+    get_robot_description_service: '/cumotion/get_robot_description'
+    set_robot_description_service: '/cumotion/set_robot_description'
 
-    # Topic names
-    joint_states_topic: /joint_states
-    depth_image_topics: [/depth_image]
-    depth_camera_infos: [/rgb/camera_info]
-
-    # Object attachment params
-    object_link_name: 'attached_object'
-    action_names: ['segmenter_attach_object', 'planner_attach_object']
-    search_radius: 0.2
-    surface_sphere_radius: 0.01
-    object_attachment_gripper_frame_name: 'grasp_frame'
-    object_attachment_n_spheres: 100
-
-    # Clustering params
-    clustering_bypass_clustering: False
-    clustering_hdbscan_min_samples: 20
-    clustering_hdbscan_min_cluster_size: 30
-    clustering_hdbscan_cluster_selection_epsilon: 0.5
-    clustering_num_top_clusters_to_select: 3
-    clustering_group_clusters: False
-    clustering_min_points: 100
-
-    # QOS
-    depth_qos: 'DEFAULT'
-    depth_info_qos: 'DEFAULT'
-
-    # Sphere radius
-    surface_sphere_radius: 0.01
-
-    # nvblox params
-    update_esdf_on_request: False
-    trigger_aabb_object_clearing: False
-    object_esdf_clearing_padding: [0.05, 0.05, 0.05]

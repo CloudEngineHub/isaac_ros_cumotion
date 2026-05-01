@@ -1,34 +1,44 @@
 /**:
   ros__parameters:
-    robot: ""
-    urdf_path: ""
-    yml_file_path: ""
+    # Robot configuration
+    urdf_file_path: "$(ros2 pkg prefix --share isaac_ros_cumotion_robot_description)/urdf/ur5e_robotiq_2f_85.urdf"
+    xrdf_file_path: "$(ros2 pkg prefix --share isaac_ros_cumotion_robot_description)/xrdf/ur5e_robotiq_2f_85.xrdf"
+
+    # Planning parameters
     time_dilation_factor: 0.5
-    max_attempts: 10
-    num_graph_seeds: 6
-    num_trajopt_seeds: 6
-    include_trajopt_retract_seed: True
-    num_trajopt_time_steps: 32
-    joint_states_topic: "/joint_states"
-    interpolation_dt: 0.025
-    collision_cache_cuboid: 20
-    collision_cache_mesh: 20
-    workspace_file_path: ''
-    grid_size_m: [2.0, 2.0, 2.0]
-    voxel_size: 0.05
-    read_esdf_world: False
-    publish_curobo_world_as_voxels: False
-    add_ground_plane: False
-    publish_voxel_size: 0.05
-    max_publish_voxels: 50000
-    tool_frame: ""
-    grid_center_m: [0.0, 0.0, 0.0]
+    interpolation_dt: 0.05
+
+    # ESDF/World configuration
+    read_esdf_world: true
+    update_esdf_on_request: true
     esdf_service_name: "/nvblox_node/get_esdf_and_gradient"
-    enable_curobo_debug_mode: False
-    override_moveit_scaling_factors: False
-    update_link_sphere_server: 'planner_attach_object'
-    enable_cuda_mps: False
+
+    # Visualization
+    publish_world_collision_spheres: true
+    publish_self_collision_spheres: false
+    publish_cumotion_world_as_voxels: false
+    publish_voxel_size: 0.01
+    max_publish_voxels: 50000
+    add_ground_plane: false
+    ground_plane_size_x: 2.0        # Ground plane X dimension (meters)
+    ground_plane_size_y: 2.0        # Ground plane Y dimension (meters)
+    ground_plane_thickness: 0.1     # Ground plane thickness (meters)
+    ground_plane_z_offset: -0.05    # Z offset below robot base (meters)
+
+    # ROS topics/services
+    joint_states_topic: "/joint_states"
+
+    # Debug and overrides
+    enable_cumotion_debug_mode: false
+    override_moveit_scaling_factors: false
+
+    # CUDA MPS configuration
+    enable_cuda_mps: false
     cuda_mps_pipe_directory: '/workspaces/isaac_ros-dev/ros_ws/mps_pipe_dir'
     cuda_mps_client_priority: 0
     cuda_mps_active_thread_percentage: 100
+
+    # Static planning scene
+    static_scene_service_max_wait_attempts: 30
+    static_planning_scene_service_name: 'publish_static_planning_scene'
     moveit_collision_objects_scene_file: ''

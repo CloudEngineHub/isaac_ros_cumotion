@@ -15,8 +15,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef ISAAC_ROS_CUMOTION_PLANNING_CONTEXT_H
-#define ISAAC_ROS_CUMOTION_PLANNING_CONTEXT_H
+#ifndef ISAAC_ROS_CUMOTION_MOVEIT__CUMOTION_PLANNING_CONTEXT_HPP_
+#define ISAAC_ROS_CUMOTION_MOVEIT__CUMOTION_PLANNING_CONTEXT_HPP_
 
 #include <memory>
 #include <string>
@@ -69,4 +69,4 @@ private:
 }  // namespace isaac
 }  // namespace nvidia
 
-#endif  // ISAAC_ROS_CUMOTION_PLANNING_CONTEXT_H
+#endif  // ISAAC_ROS_CUMOTION_MOVEIT__CUMOTION_PLANNING_CONTEXT_HPP_

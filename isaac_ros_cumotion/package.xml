@@ -2,46 +2,44 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_cumotion</name>
-  <version>4.3.0</version>
+  <version>4.4.0</version>
   <description>Package adds a cuMotion planner node</description>
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
   <license>NVIDIA Isaac ROS Software License</license>
   <url type="website">https://developer.nvidia.com/isaac-ros-gems/</url>
-  <author>Balakumar Sundaralingam</author>
+  <author>Yash Oza</author>
 
-  <depend>cv_bridge</depend>
-  <depend>isaac_ros_nitros_bridge_ros2</depend>
-  <depend>message_filters</depend>
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+
+  <depend>ament_index_cpp</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>rclcpp_components</depend>
+  <depend>tf2_ros</depend>
   <depend>moveit_msgs</depend>
-  <depend>nvblox_msgs</depend>
-  <depend>python3-opencv</depend>
-  <depend>shape_msgs</depend>
   <depend>sensor_msgs</depend>
-  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
   <depend>trajectory_msgs</depend>
+  <depend>shape_msgs</depend>
   <depend>visualization_msgs</depend>
+  <depend>nvblox_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>eigen</depend>
+  <depend>yaml-cpp</depend>
+  <depend>assimp</depend>
+  <depend>isaac_ros_nitros</depend>
+  <depend>tf2</depend>
+  <depend>control_msgs</depend>
+  <depend>isaac_ros_cumotion_interfaces</depend>
+  <depend>isaac_ros_common</depend>
 
-  <build_depend>isaac_ros_cumotion_interfaces</build_depend>
-
-  <exec_depend>curobo_core</exec_depend>
-  <exec_depend>isaac_ros_common</exec_depend>
-  <exec_depend>isaac_ros_cumotion_interfaces</exec_depend>
-  <exec_depend>isaac_ros_cumotion_python_utils</exec_depend>
-  <exec_depend>isaac_ros_cumotion_robot_description</exec_depend>
-  <exec_depend>isaac_ros_launch_utils</exec_depend>
-  <exec_depend>isaac_ros_pynitros</exec_depend>
-  <exec_depend>ros2launch</exec_depend>
-  <exec_depend>python3-torch-pip-shim</exec_depend>
-  <exec_depend>python3-warp-lang-pip-shim</exec_depend>
-  <exec_depend>python3-trimesh-pip-shim</exec_depend>
-  <exec_depend>python3-yourdfpy-pip-shim</exec_depend>
-
-  <test_depend>ament_copyright</test_depend>
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_pep257</test_depend>
-  <test_depend>python3-pytest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <!-- Load URDF/XRDF via ament_index_cpp at runtime from the robot description package. -->
+  <test_depend>isaac_ros_cumotion_robot_description</test_depend>
 
   <export>
-    <build_type>ament_python</build_type>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

@@ -5,8 +5,6 @@
 bool attach_object
 # Configuration of object to be attached, including its shape (sphere, cuboid, mesh), pose and scale. 
 visualization_msgs/Marker object_config
-# Fallback sphere radius for approximating the collision geometry if automatic generation fails.
-float64 fallback_radius
 ---
 # Result:
 # Description of the final result (e.g., success or failure).

@@ -241,12 +241,3 @@ geometry:
           radius: 0.011
         - center: [0.0, -0.01, 0.015]
           radius: 0.011
-      attached_object:
-        - center: [0.0, 0.0, 0.0]
-          radius: -10.0
-        - center: [0.0, 0.0, 0.0]
-          radius: -10.0
-        - center: [0.0, 0.0, 0.0]
-          radius: -10.0
-        - center: [0.0, 0.0, 0.0]
-          radius: -10.0

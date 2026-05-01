@@ -15,8 +15,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef ISAAC_ROS_CUMOTION_INTERFACE_H
-#define ISAAC_ROS_CUMOTION_INTERFACE_H
+#ifndef ISAAC_ROS_CUMOTION_MOVEIT__CUMOTION_INTERFACE_HPP_
+#define ISAAC_ROS_CUMOTION_MOVEIT__CUMOTION_INTERFACE_HPP_
 
 #include <memory>
 
@@ -35,7 +35,7 @@ namespace manipulation
 class CumotionInterface
 {
 public:
-  CumotionInterface(const rclcpp::Node::SharedPtr & node)
+  explicit CumotionInterface(const rclcpp::Node::SharedPtr & node)
   : node_(node),
     action_client_(std::make_shared<CumotionMoveGroupClient>(node))
   {
@@ -57,4 +57,4 @@ private:
 }  // namespace isaac
 }  // namespace nvidia
 
-#endif  // ISAAC_ROS_CUMOTION_INTERFACE_H
+#endif  // ISAAC_ROS_CUMOTION_MOVEIT__CUMOTION_INTERFACE_HPP_
