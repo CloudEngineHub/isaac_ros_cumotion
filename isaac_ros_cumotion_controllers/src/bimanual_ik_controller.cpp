@@ -1,4 +1,5 @@
-// Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,7 +38,7 @@ std::optional<std::vector<size_t>> FindInterfaceIndices(
         break;
       }
     }
-    if (!found) return std::nullopt;
+    if (!found) {return std::nullopt;}
   }
   return indices;
 }
@@ -51,12 +52,44 @@ namespace isaac_ros
 namespace cumotion_controllers
 {
 
+namespace
+{
+
+bool IsPoseDataFinite(const PoseData & pose)
+{
+  return pose.first.allFinite() && pose.second.coeffs().allFinite();
+}
+
+bool IsReferencePoseValid(const geometry_msgs::msg::Pose & pose)
+{
+  // Reject the "unset" sentinel: position near origin AND orientation near identity (1,0,0,0).
+  // Tolerances smaller than any meaningful EE offset / rotation.
+  constexpr double kPosTolerance = 1e-3;
+  constexpr double kRotTolerance = 1e-3;
+  const Eigen::Vector3d position(pose.position.x, pose.position.y, pose.position.z);
+  const Eigen::Quaterniond q(pose.orientation.w, pose.orientation.x,
+    pose.orientation.y, pose.orientation.z);
+  const auto rot_err = q.normalized().angularDistance(Eigen::Quaterniond::Identity());
+  return !(position.isZero(kPosTolerance) && rot_err < kRotTolerance);
+}
+
+}  // namespace
+
 BimanualIkController::BimanualIkController() = default;
+
+void BimanualIkController::ApplyVelocityCap(cumotion::RmpFlowConfig & config, double max_velocity)
+{
+  constexpr double kDampingRegionFraction = 0.5;
+  config.setParam("joint_velocity_cap_rmp/max_velocity", max_velocity);
+  config.setParam(
+    "joint_velocity_cap_rmp/velocity_damping_region",
+    max_velocity * kDampingRegionFraction);
+}
 
 std::string BimanualIkController::MakeCommandInterfaceName(
   const std::string & joint, const std::string & iface) const
 {
-  if (command_prefix_.empty()) return joint + "/" + iface;
+  if (command_prefix_.empty()) {return joint + "/" + iface;}
   return command_prefix_ + "/" + joint + "/" + iface + command_suffix_;
 }
 
@@ -70,8 +103,9 @@ controller_interface::CallbackReturn BimanualIkController::on_configure(
 {
   joint_names_ = auto_declare<std::vector<std::string>>("joints", {});
   const auto left_ee = auto_declare<std::string>("left_end_effector_frame", "left_hand_palm_link");
-  const auto right_ee = auto_declare<std::string>("right_end_effector_frame", "right_hand_palm_link");
-  left_ee_command_frame_name_  = auto_declare<std::string>("left_ee_command_frame", left_ee);
+  const auto right_ee = auto_declare<std::string>("right_end_effector_frame",
+          "right_hand_palm_link");
+  left_ee_command_frame_name_ = auto_declare<std::string>("left_ee_command_frame", left_ee);
   right_ee_command_frame_name_ = auto_declare<std::string>("right_ee_command_frame", right_ee);
   const std::filesystem::path urdf_path = auto_declare<std::string>("urdf_path", "");
   const std::filesystem::path xrdf_path = auto_declare<std::string>("xrdf_path", "");
@@ -106,67 +140,70 @@ controller_interface::CallbackReturn BimanualIkController::on_configure(
     return controller_interface::CallbackReturn::ERROR;
   }
 
-  kinematics_            = robot_description->kinematics();
-  left_ee_frame_handle_  = kinematics_->frame(left_ee);
+  kinematics_ = robot_description->kinematics();
+  left_ee_frame_handle_ = kinematics_->frame(left_ee);
   right_ee_frame_handle_ = kinematics_->frame(right_ee);
-  left_ee_frame_name_    = kinematics_->frameName(left_ee_frame_handle_);
-  right_ee_frame_name_   = kinematics_->frameName(right_ee_frame_handle_);
-  base_frame_            = kinematics_->frameName(kinematics_->baseFrame());
+  left_ee_frame_name_ = kinematics_->frameName(left_ee_frame_handle_);
+  right_ee_frame_name_ = kinematics_->frameName(right_ee_frame_handle_);
+  base_frame_ = kinematics_->frameName(kinematics_->baseFrame());
 
   auto world = cumotion::CreateWorld();
-  rmpflow_ = cumotion::CreateRmpFlow(*cumotion::CreateRmpFlowConfigFromFile(
-    rmpflow_config, *robot_description, world->addWorldView()));
+  auto rmpflow_cfg = cumotion::CreateRmpFlowConfigFromFile(
+    rmpflow_config, *robot_description, world->addWorldView());
+
+  const double max_joint_velocity = auto_declare<double>("max_joint_velocity", -1.0);
+  if (max_joint_velocity > 0.0) {
+    ApplyVelocityCap(*rmpflow_cfg, max_joint_velocity);
+  }
+
+  rmpflow_ = cumotion::CreateRmpFlow(*rmpflow_cfg);
   rmpflow_->addTargetFrame(left_ee_frame_name_);
   rmpflow_->addTargetFrame(right_ee_frame_name_);
 
   try {
-    pinocchio::urdf::buildModel(urdf_path, pin_model_);
+    id_solver_ = std::make_unique<isaac_ros_inverse_dynamics::InverseDynamicsSolver>(
+      urdf_path.string(), joint_names_);
   } catch (const std::exception & e) {
-    RCLCPP_ERROR(n.get_logger(), "Failed to build Pinocchio model from '%s': %s",
+    RCLCPP_ERROR(n.get_logger(), "Failed to build inverse-dynamics solver from '%s': %s",
       urdf_path.c_str(), e.what());
     return controller_interface::CallbackReturn::ERROR;
   }
-  pin_data_ = pinocchio::Data(pin_model_);
-  q_full_   = Eigen::VectorXd::Zero(pin_model_.nq);
-  v_full_   = Eigen::VectorXd::Zero(pin_model_.nv);
-  a_full_   = Eigen::VectorXd::Zero(pin_model_.nv);
 
-  const auto n_dof = static_cast<int>(joint_names_.size());
-  pin_mappings_.clear();
-  for (int i = 0; i < n_dof; ++i) {
-    if (!pin_model_.existJointName(joint_names_[i])) {
-      RCLCPP_ERROR(n.get_logger(),
-        "Joint '%s' not found in Pinocchio model — torque will be zero for this DOF",
-        joint_names_[i].c_str());
-      continue;
-    }
-    pin_mappings_.push_back({
-      i,
-      static_cast<int>(pin_model_.idx_vs[pin_model_.getJointId(joint_names_[i])])
-    });
-  }
-
-  tf_buffer_   = std::make_unique<tf2_ros::Buffer>(n.get_clock());
+  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(n.get_clock());
   tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
 
   pose_sub_ = n.create_subscription<geometry_msgs::msg::PoseArray>(
     pose_topic, rclcpp::SensorDataQoS(),
     [this](geometry_msgs::msg::PoseArray::SharedPtr msg) {
-      if (msg->poses.size() < 2) {
+      // Reference pose array must contain exactly two poses (left and right EE).
+      if (msg->poses.size() != 2) {
         RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
-          "Expected at least 2 reference poses (right + left), got %zu — ignoring",
+          "Expected exactly 2 reference poses (left + right), got %zu — ignoring",
           msg->poses.size());
         return;
       }
+
+      // Filter out unset poses (origin position + identity orientation within tolerance).
+      const auto left_is_valid = IsReferencePoseValid(msg->poses[0]);
+      const auto right_is_valid = IsReferencePoseValid(msg->poses[1]);
+      if (!left_is_valid || !right_is_valid) {
+        RCLCPP_DEBUG_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
+          "Reference pose slot rejected as unset (zero pose): left_valid=%d right_valid=%d",
+          left_is_valid, right_is_valid);
+      }
+
       PoseTargets targets;
-      targets.right = ExtractAndTransformPose(
-        msg->header, msg->poses[0], right_ee_command_frame_name_, right_ee_frame_name_);
-      targets.left  = ExtractAndTransformPose(
-        msg->header, msg->poses[1], left_ee_command_frame_name_, left_ee_frame_name_);
+      targets.left = left_is_valid ? ExtractAndTransformPose(
+        msg->header, msg->poses[0], left_ee_command_frame_name_, left_ee_frame_name_) :
+      std::nullopt;
+      targets.right = right_is_valid ? ExtractAndTransformPose(
+        msg->header, msg->poses[1], right_ee_command_frame_name_, right_ee_frame_name_) :
+      std::nullopt;
       pose_targets_buffer_.writeFromNonRT(targets);
     });
 
-  RCLCPP_INFO(n.get_logger(), "BimanualIkController configured: %zu joints, left EE '%s', right EE '%s'",
+  RCLCPP_INFO(n.get_logger(),
+          "BimanualIkController configured: %zu joints, left EE '%s', right EE '%s'",
     joint_names_.size(), left_ee_frame_name_.c_str(), right_ee_frame_name_.c_str());
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -175,41 +212,42 @@ controller_interface::CallbackReturn BimanualIkController::on_activate(
   const rclcpp_lifecycle::State &)
 {
   const auto n_dof = static_cast<int>(joint_names_.size());
-  joint_accel_               = Eigen::VectorXd::Zero(n_dof);
+  joint_accel_ = Eigen::VectorXd::Zero(n_dof);
   joint_position_integrated_ = Eigen::VectorXd::Zero(n_dof);
   joint_velocity_integrated_ = Eigen::VectorXd::Zero(n_dof);
-  joint_position_            = Eigen::VectorXd::Zero(n_dof);
-  joint_velocity_            = Eigen::VectorXd::Zero(n_dof);
-  tau_ff_                    = Eigen::VectorXd::Zero(n_dof);
+  joint_position_ = Eigen::VectorXd::Zero(n_dof);
+  joint_velocity_ = Eigen::VectorXd::Zero(n_dof);
+  tau_ff_ = Eigen::VectorXd::Zero(n_dof);
 
   auto make_names = [&](const std::string & iface, bool cmd) -> std::vector<std::string> {
-    std::vector<std::string> out;
-    out.reserve(joint_names_.size());
-    for (const auto & j : joint_names_)
-      out.push_back(cmd ? MakeCommandInterfaceName(j, iface) : j + "/" + iface);
-    return out;
-  };
+      std::vector<std::string> out;
+      out.reserve(joint_names_.size());
+      for (const auto & j : joint_names_) {
+        out.push_back(cmd ? MakeCommandInterfaceName(j, iface) : j + "/" + iface);
+      }
+      return out;
+    };
   auto find_state = [&](const std::string & iface) -> std::optional<std::vector<size_t>> {
-    return FindInterfaceIndices(make_names(iface, false), state_interfaces_);
-  };
+      return FindInterfaceIndices(make_names(iface, false), state_interfaces_);
+    };
   auto find_cmd = [&](const std::string & iface) -> std::optional<std::vector<size_t>> {
-    return FindInterfaceIndices(make_names(iface, true), command_interfaces_);
-  };
+      return FindInterfaceIndices(make_names(iface, true), command_interfaces_);
+    };
 
   const auto pos_s = find_state(hardware_interface::HW_IF_POSITION);
   const auto vel_s = find_state(hardware_interface::HW_IF_VELOCITY);
   const auto pos_c = find_cmd(hardware_interface::HW_IF_POSITION);
   const auto vel_c = find_cmd(hardware_interface::HW_IF_VELOCITY);
   const auto eff_c = find_cmd(hardware_interface::HW_IF_EFFORT);
-  const auto kp_c  = find_cmd("kp");
-  const auto kd_c  = find_cmd("kd");
+  const auto kp_c = find_cmd("kp");
+  const auto kd_c = find_cmd("kd");
   if (!pos_s || !vel_s || !pos_c || !vel_c || !eff_c || !kp_c || !kd_c) {
     RCLCPP_ERROR(get_node()->get_logger(), "Failed to find required interfaces for joints");
     return controller_interface::CallbackReturn::ERROR;
   }
-  hw_.pos_state  = *pos_s; hw_.vel_state  = *vel_s;
-  hw_.pos_cmd    = *pos_c; hw_.vel_cmd    = *vel_c;
-  hw_.effort_cmd = *eff_c; hw_.kp_cmd     = *kp_c; hw_.kd_cmd = *kd_c;
+  hw_.pos_state = *pos_s; hw_.vel_state = *vel_s;
+  hw_.pos_cmd = *pos_c; hw_.vel_cmd = *vel_c;
+  hw_.effort_cmd = *eff_c; hw_.kp_cmd = *kp_c; hw_.kd_cmd = *kd_c;
 
   for (int i = 0; i < n_dof; ++i) {
     const auto pos = state_interfaces_[hw_.pos_state[i]].get_optional<double>();
@@ -226,11 +264,6 @@ controller_interface::CallbackReturn BimanualIkController::on_activate(
   joint_position_ = joint_position_integrated_;
   joint_velocity_ = joint_velocity_integrated_;
 
-  q_full_.setZero(); v_full_.setZero(); a_full_.setZero();
-  for (const auto & m : pin_mappings_) {
-    q_full_(m.pin_v_idx) = joint_position_integrated_(m.ctrl_idx);
-    v_full_(m.pin_v_idx) = joint_velocity_integrated_(m.ctrl_idx);
-  }
   rmpflow_->setPoseTarget(left_ee_frame_name_,
     kinematics_->pose(joint_position_integrated_, left_ee_frame_handle_));
   rmpflow_->setPoseTarget(right_ee_frame_name_,
@@ -275,7 +308,7 @@ BimanualIkController::state_interface_configuration() const
 }
 
 controller_interface::return_type BimanualIkController::update(
-  const rclcpp::Time &, const rclcpp::Duration & period)
+  const rclcpp::Time & /*time*/, const rclcpp::Duration & period)
 {
   const auto n_dof = static_cast<int>(joint_names_.size());
   const double dt = period.seconds();
@@ -300,11 +333,11 @@ controller_interface::return_type BimanualIkController::update(
 
   // Apply pose targets from subscription (RT-safe read).
   const auto targets = *pose_targets_buffer_.readFromRT();
-  if (targets.right) {
+  if (targets.right && IsPoseDataFinite(*targets.right)) {
     rmpflow_->setPoseTarget(right_ee_frame_name_,
       cumotion::Pose3(cumotion::Rotation3(targets.right->second), targets.right->first));
   }
-  if (targets.left) {
+  if (targets.left && IsPoseDataFinite(*targets.left)) {
     rmpflow_->setPoseTarget(left_ee_frame_name_,
       cumotion::Pose3(cumotion::Rotation3(targets.left->second), targets.left->first));
   }
@@ -316,21 +349,14 @@ controller_interface::return_type BimanualIkController::update(
   const Eigen::VectorXd v_target = joint_velocity_integrated_ + dt * joint_accel_;
   const Eigen::VectorXd q_target = joint_position_integrated_ + dt * v_target;
 
-  // Inverse dynamics: tau_ff = M(q)*a + C(q,v)*v + G(q).
-  for (const auto & m : pin_mappings_) {
-    q_full_(m.pin_v_idx) = joint_position_integrated_(m.ctrl_idx);
-    v_full_(m.pin_v_idx) = joint_velocity_integrated_(m.ctrl_idx);
-    a_full_(m.pin_v_idx) = joint_accel_(m.ctrl_idx);
-  }
-  pinocchio::rnea(pin_model_, pin_data_, q_full_, v_full_, a_full_);
-  for (const auto & m : pin_mappings_) {
-    tau_ff_(m.ctrl_idx) = pin_data_.tau(m.pin_v_idx);
-  }
+  id_solver_->computeInverseDynamics(
+    joint_position_integrated_, joint_velocity_integrated_, joint_accel_, tau_ff_);
 
   // Write commands: RNEA feedforward + hardware PD on position/velocity targets.
   for (int i = 0; i < n_dof; ++i) {
     (void)command_interfaces_[hw_.pos_cmd[i]].set_value(q_target(i));
-    (void)command_interfaces_[hw_.vel_cmd[i]].set_value(v_target(i));
+    // v_cmd=0 for consistency with the GR00T deployment.
+    (void)command_interfaces_[hw_.vel_cmd[i]].set_value(0.0);
     (void)command_interfaces_[hw_.effort_cmd[i]].set_value(tau_ff_(i));
     (void)command_interfaces_[hw_.kp_cmd[i]].set_value(kp_);
     (void)command_interfaces_[hw_.kd_cmd[i]].set_value(kd_);
@@ -359,7 +385,7 @@ std::optional<PoseData> BimanualIkController::ExtractAndTransformPose(
     tf2::Transform base_T_cmd_parent;
     tf2::fromMsg(base_T_cmd_parent_msg.transform, base_T_cmd_parent);
 
-    // base_T_cmd: 
+    // base_T_cmd:
     const auto base_T_cmd = base_T_cmd_parent * cmd_parent_T_cmd;
 
     // cmd_T_ee:
@@ -367,7 +393,7 @@ std::optional<PoseData> BimanualIkController::ExtractAndTransformPose(
         ee_command_frame, ee_frame, tf2::TimePointZero, tf2::durationFromSec(0.1));
     tf2::Transform cmd_T_ee;
     tf2::fromMsg(cmd_T_ee_msg.transform, cmd_T_ee);
-    
+
     // base_T_ee:
     const auto base_T_ee = base_T_cmd * cmd_T_ee;
 

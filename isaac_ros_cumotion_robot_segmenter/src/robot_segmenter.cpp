@@ -47,16 +47,7 @@ RobotSegmenter::RobotSegmenter(const rclcpp::NodeOptions & options)
       *this, kDefaultQoS, "input_qos")},
   output_qos_{::isaac_ros::common::AddQosParameter(
       *this, kDefaultQoS, "output_qos")},
-  depth_sub_{std::make_shared<Nitros::ManagedNitrosSubscriber<Nitros::NitrosImageView>>(
-      this,
-      "depth_image",
-      Nitros::nitros_image_32FC1_t::supported_type_name,
-      std::bind(&RobotSegmenter::DepthCallback, this, std::placeholders::_1),
-      Nitros::NitrosDiagnosticsConfig{}, input_qos_)},
-  depth_info_sub_{std::make_shared<Nitros::ManagedNitrosSubscriber<Nitros::NitrosCameraInfoView>>(
-      this, "camera_info_depth", Nitros::nitros_camera_info_t::supported_type_name,
-      std::bind(&RobotSegmenter::DepthCameraInfoCallback, this, std::placeholders::_1),
-      Nitros::NitrosDiagnosticsConfig{}, input_qos_)},
+  memory_pool_num_blocks_(declare_parameter<int64_t>("memory_pool_num_blocks", 40)),
   enable_performance_logging_(declare_parameter<bool>("enable_performance_logging", false)),
   additional_buffer_distance_(declare_parameter<double>("additional_buffer_distance", 0.0)),
   robot_base_frame_(declare_parameter<std::string>("robot_base_frame", "base_link")),
@@ -64,6 +55,10 @@ RobotSegmenter::RobotSegmenter(const rclcpp::NodeOptions & options)
       "robot_description_service_name",
       "/cumotion/get_robot_description"))
 {
+  if (memory_pool_num_blocks_ <= 0) {
+    throw std::runtime_error("memory_pool_num_blocks must be greater than 0");
+  }
+
   // Load robot description from URDF and XRDF files
   const std::string urdf_path = declare_parameter<std::string>("urdf_path", "");
   const std::string xrdf_path = declare_parameter<std::string>("xrdf_path", "");
@@ -97,33 +92,37 @@ RobotSegmenter::RobotSegmenter(const rclcpp::NodeOptions & options)
     ordered_joint_names_.push_back(robot_description_->cSpaceCoordName(i));
   }
 
-  CHECK_CUDA_ERROR(
-    ::nvidia::isaac_ros::common::initNamedCudaStream(
-      cuda_stream_, "isaac_ros_cumotion_robot_segmenter_stream"),
-    "Error initializing CUDA stream");
-
   rclcpp::SubscriptionOptions sub_options;
-  sub_options.callback_group = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+  depth_sub_ = create_subscription<Nitros::NitrosImage>(
+    "depth_image", input_qos_,
+    std::bind(&RobotSegmenter::DepthCallback, this, std::placeholders::_1), sub_options);
+  depth_info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
+    "camera_info_depth", input_qos_,
+    std::bind(&RobotSegmenter::DepthCameraInfoCallback, this, std::placeholders::_1), sub_options);
+
+  cuda_stream_ = ::nvidia::isaac_ros::common::createCudaStream(
+    "isaac_ros_cumotion_robot_segmenter_stream");
+
+  rclcpp::SubscriptionOptions sub_options_joint_state;
+  sub_options_joint_state.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+  sub_options_joint_state.callback_group = create_callback_group(
+    rclcpp::CallbackGroupType::Reentrant);
 
   joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
     "joint_states", input_qos_,
-    std::bind(&RobotSegmenter::JointStateCallback, this, std::placeholders::_1), sub_options);
+    std::bind(&RobotSegmenter::JointStateCallback, this, std::placeholders::_1),
+    sub_options_joint_state);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-  // Publisher
-  robot_mask_pub_ = std::make_shared<
-    Nitros::ManagedNitrosPublisher<Nitros::NitrosImage>>(
-    this, "robot_mask",
-    Nitros::nitros_image_mono16_t::supported_type_name,
-    Nitros::NitrosDiagnosticsConfig{}, output_qos_);
-
-  robot_depth_pub_ = std::make_shared<
-    Nitros::ManagedNitrosPublisher<Nitros::NitrosImage>>(
-    this, "robot_depth",
-    Nitros::nitros_image_mono16_t::supported_type_name,
-    Nitros::NitrosDiagnosticsConfig{}, output_qos_);
+  rclcpp::PublisherOptions pub_options;
+  pub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+  robot_mask_pub_ = create_publisher<nvidia::isaac_ros::nitros::NitrosImage>(
+    "robot_mask", output_qos_, pub_options);
+  robot_depth_pub_ = create_publisher<nvidia::isaac_ros::nitros::NitrosImage>(
+    "robot_depth", output_qos_, pub_options);
 
   // Topic name for receiving reload robot description signal
   const std::string reload_topic_name = declare_parameter<std::string>(
@@ -188,11 +187,11 @@ void RobotSegmenter::InitializeCameraPose(const sensor_msgs::msg::CameraInfo & d
 
 RobotSegmenter::~RobotSegmenter()
 {
-  CHECK_CUDA_ERROR(cudaStreamDestroy(cuda_stream_), "Error destroying CUDA stream");
+  CHECK_CUDA_ERROR(cudaStreamSynchronize(*cuda_stream_), "Failed to synchronize CUDA stream");
 }
 
 void RobotSegmenter::ComputeAndPublishRobotMask(
-  const Nitros::NitrosImageView & depth_view,
+  const Nitros::NitrosImage & depth_msg,
   const sensor_msgs::msg::CameraInfo & depth_camera_info,
   const sensor_msgs::msg::JointState & joint_state)
 {
@@ -200,8 +199,8 @@ void RobotSegmenter::ComputeAndPublishRobotMask(
 
   RCLCPP_DEBUG(get_logger(), "Starting robot segmenter computation");
 
-  const int depth_w = static_cast<int>(depth_view.GetWidth());
-  const int depth_h = static_cast<int>(depth_view.GetHeight());
+  const int depth_w = static_cast<int>(depth_msg.width);
+  const int depth_h = static_cast<int>(depth_msg.height);
 
   // Check if buffers are allocated and have correct size
   if (buffer_width_ != depth_w || buffer_height_ != depth_h) {
@@ -216,11 +215,8 @@ void RobotSegmenter::ComputeAndPublishRobotMask(
     return;
   }
 
-  // Get GPU pointer from input NitrosImage
-  const size_t buffer_size = depth_view.GetSizeInBytes();
-
-  // Get encoding of input image to dictate whether we create a float image or uint16 image.
-  const std::string encoding = depth_view.GetEncoding();
+  const std::string encoding = depth_msg.encoding;
+  const size_t buffer_size = depth_msg.get_data_size();
 
   is_mono_ = encoding == sensor_msgs::image_encodings::TYPE_32FC1 ? false : true;
 
@@ -252,23 +248,53 @@ void RobotSegmenter::ComputeAndPublishRobotMask(
       joint_state.position[name_index_cache_[ordered_joint_names_[i]]];
   }
 
+  // Create output buffer pool, assuming the size of the buffer doesn't change
+  if (!pool_.initialized()) {
+    cudaError_t err = pool_.create(
+      static_cast<size_t>(buffer_size), static_cast<size_t>(memory_pool_num_blocks_),
+      nvidia::isaac_ros::nitros::CUDAMemoryPool::MemoryType::Device);
+    CHECK_CUDA_ERROR(err, "Failed to initialize output buffer pool");
+  }
+
   // Generic lambda to handle both uint16_t and float types
   // This avoids code duplication - compiler instantiates two versions
   auto process_depth = [&](auto * input_buf, auto * output_buf, auto * mask_buf) {
       using T = std::remove_pointer_t<decltype(input_buf)>;
+      const size_t dense_buffer_size = num_pixels * sizeof(T);
 
       // Copy input data from GPU to CPU buffer
       RCLCPP_DEBUG(
         get_logger(), "Copying depth image from GPU to CPU, buffer size: %zu bytes",
-        depth_view.GetSizeInBytes());
+        dense_buffer_size);
+      if (buffer_size != dense_buffer_size) {
+        throw std::runtime_error("Depth image must be tightly packed");
+      }
+
+      auto depth_read_handle = depth_msg.get_read_handle(*cuda_stream_);
       CHECK_CUDA_ERROR(
         cudaMemcpyAsync(
-          input_buf, depth_view.GetGpuData(),
-          depth_view.GetSizeInBytes(), cudaMemcpyDefault, cuda_stream_),
+          input_buf, depth_read_handle.get_ptr(),
+          buffer_size, cudaMemcpyDefault, *cuda_stream_),
         "Failed to copy depth image from GPU to CPU");
       CHECK_CUDA_ERROR(
-        cudaStreamSynchronize(cuda_stream_),
+        cudaStreamSynchronize(*cuda_stream_),
         "Failed to synchronize CUDA stream after copying depth image");
+
+      const std::string output_encoding = std::is_same_v<T, uint16_t> ?
+        sensor_msgs::image_encodings::TYPE_16UC1 :
+        sensor_msgs::image_encodings::TYPE_32FC1;
+
+      const size_t bytes_per_element =
+        sensor_msgs::image_encodings::bitDepth(output_encoding) / CHAR_BIT;
+      const size_t num_channels = sensor_msgs::image_encodings::numChannels(output_encoding);
+
+      auto depth_output_image = std::make_unique<nvidia::isaac_ros::nitros::NitrosImage>();
+      size_t output_step = depth_w * num_channels * bytes_per_element;
+      auto depth_write_handle = depth_output_image->from_pool(
+        pool_, depth_w, depth_h, output_step, output_encoding, *cuda_stream_);
+      auto mask_output_image = std::make_unique<nvidia::isaac_ros::nitros::NitrosImage>();
+      auto mask_write_handle = mask_output_image->from_pool(
+        pool_, depth_w, depth_h, output_step, output_encoding, *cuda_stream_);
 
       // Create CPU DepthImage views with HOST residency
       const auto input_depth_image = cumotion::CreateDepthImageView(
@@ -288,57 +314,32 @@ void RobotSegmenter::ComputeAndPublishRobotMask(
       );
 
       // Allocate GPU memory and copy output
-      T * gpu_aligned_depth = nullptr;
-      T * gpu_aligned_mask = nullptr;
-      CHECK_CUDA_ERROR(
-        cudaMallocAsync(&gpu_aligned_depth, buffer_size, cuda_stream_),
-        "Error allocating GPU memory for segmented depth output");
-      CHECK_CUDA_ERROR(
-        cudaMallocAsync(&gpu_aligned_mask, buffer_size, cuda_stream_),
-        "Error allocating GPU memory for segmented mask output");
-
+      T * gpu_aligned_depth = reinterpret_cast<T *>(depth_write_handle.get_ptr());
+      T * gpu_aligned_mask = reinterpret_cast<T *>(mask_write_handle.get_ptr());
       CHECK_CUDA_ERROR(
         cudaMemcpyAsync(
-          gpu_aligned_mask, mask_buf, buffer_size, cudaMemcpyDefault, cuda_stream_),
+          gpu_aligned_mask, mask_buf, buffer_size, cudaMemcpyDefault, *cuda_stream_),
         "Failed to copy segmented mask from CPU to GPU");
       CHECK_CUDA_ERROR(
         cudaMemcpyAsync(
-          gpu_aligned_depth, output_buf, buffer_size, cudaMemcpyDefault, cuda_stream_),
+          gpu_aligned_depth, output_buf, buffer_size, cudaMemcpyDefault, *cuda_stream_),
         "Failed to copy segmented depth from CPU to GPU");
       CHECK_CUDA_ERROR(
-        cudaStreamSynchronize(cuda_stream_),
+        cudaStreamSynchronize(*cuda_stream_),
         "Failed to synchronize CUDA stream after copying segmented outputs");
 
       // Build and publish NitrosImage with GPU data
-      std_msgs::msg::Header out_header;
-      out_header.frame_id = depth_camera_info.header.frame_id;
-      out_header.stamp.sec = depth_view.GetTimestampSeconds();
-      out_header.stamp.nanosec = depth_view.GetTimestampNanoseconds();
-
-      const std::string encoding = std::is_same_v<T, uint16_t> ?
-        sensor_msgs::image_encodings::TYPE_16UC1 :
-        sensor_msgs::image_encodings::TYPE_32FC1;
+      mask_output_image->frame_id = depth_camera_info.header.frame_id;
+      mask_output_image->set_timestamp_sec(depth_msg.timestamp_sec);
+      mask_output_image->set_timestamp_nsec(depth_msg.timestamp_nsec);
+      depth_output_image->frame_id = depth_camera_info.header.frame_id;
+      depth_output_image->set_timestamp_sec(depth_msg.timestamp_sec);
+      depth_output_image->set_timestamp_nsec(depth_msg.timestamp_nsec);
 
       // Note that for uint16_t 0 = robot, max uint16_t value = background.
       // For float16 0 = robot, 1 = background.
-      Nitros::NitrosImage segmented_depth_mask =
-        Nitros::NitrosImageBuilder()
-        .WithHeader(out_header)
-        .WithDimensions(depth_h, depth_w)
-        .WithEncoding(encoding)
-        .WithGpuData(gpu_aligned_mask)
-        .Build();
-
-      Nitros::NitrosImage segmented_depth_image =
-        Nitros::NitrosImageBuilder()
-        .WithHeader(out_header)
-        .WithDimensions(depth_h, depth_w)
-        .WithEncoding(encoding)
-        .WithGpuData(gpu_aligned_depth)
-        .Build();
-
-      robot_mask_pub_->publish(segmented_depth_mask);
-      robot_depth_pub_->publish(segmented_depth_image);
+      robot_mask_pub_->publish(std::move(mask_output_image));
+      robot_depth_pub_->publish(std::move(depth_output_image));
     };
 
   // Call with appropriate buffer types based on encoding
@@ -363,7 +364,7 @@ void RobotSegmenter::ComputeAndPublishRobotMask(
   }
 }
 
-void RobotSegmenter::DepthCallback(const Nitros::NitrosImageView & msg)
+void RobotSegmenter::DepthCallback(const Nitros::NitrosImage::ConstSharedPtr & msg)
 {
   std::lock_guard<std::mutex> lock(node_mutex_);
 
@@ -374,12 +375,12 @@ void RobotSegmenter::DepthCallback(const Nitros::NitrosImageView & msg)
     RCLCPP_DEBUG(get_logger(), "Have not received joint state yet !");
     return;
   } else {
-    ComputeAndPublishRobotMask(msg, depth_camera_info_.value(), joint_state_.value());
+    ComputeAndPublishRobotMask(*msg, depth_camera_info_.value(), joint_state_.value());
   }
 }
 
 void RobotSegmenter::DepthCameraInfoCallback(
-  const Nitros::NitrosCameraInfoView & msg)
+  const sensor_msgs::msg::CameraInfo::ConstSharedPtr & msg)
 {
   std::lock_guard<std::mutex> lock(node_mutex_);
 
@@ -388,15 +389,7 @@ void RobotSegmenter::DepthCameraInfoCallback(
     return;
   }
 
-  // Convert NitrosCameraInfoView to ROS CameraInfo
-  sensor_msgs::msg::CameraInfo depth_camera_info;
-  try {
-    rclcpp::TypeAdapter<Nitros::NitrosCameraInfo, sensor_msgs::msg::CameraInfo>
-    ::convert_to_ros_message(msg.GetMessage(), depth_camera_info);
-  } catch (const std::runtime_error & e) {
-    RCLCPP_ERROR(get_logger(), "Failed to convert depth NitrosCameraInfo: %s", e.what());
-    return;
-  }
+  const sensor_msgs::msg::CameraInfo & depth_camera_info = *msg;
 
   // Create and cache cuMotion CameraIntrinsics from the ROS CameraInfo K matrix
   // K is a 3x3 matrix in row-major order: [fx, 0, cx, 0, fy, cy, 0, 0, 1]

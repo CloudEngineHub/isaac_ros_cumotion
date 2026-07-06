@@ -34,16 +34,13 @@
 #include "cumotion/robot_segmenter.h"
 #include "cumotion/vision.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "isaac_ros_common/cuda_stream.hpp"
 #include "isaac_ros_common/qos.hpp"
-#include "isaac_ros_managed_nitros/managed_nitros_publisher.hpp"
-#include "isaac_ros_managed_nitros/managed_nitros_subscriber.hpp"
-#include "isaac_ros_nitros_camera_info_type/nitros_camera_info.hpp"
-#include "isaac_ros_nitros_camera_info_type/nitros_camera_info_view.hpp"
 #include "isaac_ros_nitros_image_type/nitros_image_builder.hpp"
-#include "isaac_ros_nitros_image_type/nitros_image_view.hpp"
 #include "isaac_ros_nitros_image_type/nitros_image.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/image_encodings.hpp"
+#include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "tf2_eigen/tf2_eigen.hpp"
@@ -67,25 +64,23 @@ public:
   ~RobotSegmenter();
 
 private:
-  // CUDA stream
-  cudaStream_t cuda_stream_;
-
   // QoS parameters
   int sync_queue_size_;
   rclcpp::QoS input_qos_;
   rclcpp::QoS output_qos_;
+  int64_t memory_pool_num_blocks_;
 
   // Subscribers for individual callbacks
-  std::shared_ptr<Nitros::ManagedNitrosSubscriber<Nitros::NitrosImageView>> depth_sub_;
-  std::shared_ptr<Nitros::ManagedNitrosSubscriber<Nitros::NitrosCameraInfoView>> depth_info_sub_;
+  rclcpp::Subscription<Nitros::NitrosImage>::SharedPtr depth_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr depth_info_sub_;
   // Subscribe to joint state message, used to determine robot pose
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
 
   // Publisher for robot mask
-  std::shared_ptr<Nitros::ManagedNitrosPublisher<Nitros::NitrosImage>> robot_mask_pub_;
+  rclcpp::Publisher<nvidia::isaac_ros::nitros::NitrosImage>::SharedPtr robot_mask_pub_;
 
   // Publisher for robot depth
-  std::shared_ptr<Nitros::ManagedNitrosPublisher<Nitros::NitrosImage>> robot_depth_pub_;
+  rclcpp::Publisher<nvidia::isaac_ros::nitros::NitrosImage>::SharedPtr robot_depth_pub_;
 
   // TF buffer and listener for receiving extrinsics
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -156,11 +151,15 @@ private:
   // Service name for getting robot description
   std::string robot_description_service_name_;
 
+  // CUDA resources
+  ::nvidia::isaac_ros::common::CudaStreamPtr cuda_stream_;
+  nvidia::isaac_ros::nitros::CUDAMemoryPool pool_;
+
   // Callback group for service client
   rclcpp::CallbackGroup::SharedPtr service_cb_group_;
 
-  void DepthCallback(const Nitros::NitrosImageView & msg);
-  void DepthCameraInfoCallback(const Nitros::NitrosCameraInfoView & msg);
+  void DepthCallback(const Nitros::NitrosImage::ConstSharedPtr & msg);
+  void DepthCameraInfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr & msg);
   void JointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
 
   // Callback for robot description reload signal
@@ -178,7 +177,7 @@ private:
 
   // Shared computation used by both synchronized and individual callbacks
   void ComputeAndPublishRobotMask(
-    const Nitros::NitrosImageView & depth_view,
+    const Nitros::NitrosImage & depth_msg,
     const sensor_msgs::msg::CameraInfo & depth_camera_info,
     const sensor_msgs::msg::JointState & joint_state);
 };
