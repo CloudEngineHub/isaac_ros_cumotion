@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
-# Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,15 +19,15 @@
 
 Publishes two 6-DOF draggable markers in RViz — one for the left arm and one for the right arm.
 A PoseArray is published at 50 Hz to /ik_controller/reference_pose where:
-  poses[0] = right end-effector target
-  poses[1] = left end-effector target
+  poses[0] = left end-effector target
+  poses[1] = right end-effector target
 
 Interaction: click on a ring handle to rotate, click on an arrow to translate.
 """
 
-import rclpy
 from geometry_msgs.msg import Pose, PoseArray
 from interactive_markers.interactive_marker_server import InteractiveMarkerServer
+import rclpy
 from rclpy.node import Node
 from visualization_msgs.msg import (
     InteractiveMarker,
@@ -153,8 +154,8 @@ class BimanualIkControllerMarkerNode(Node):
         msg = PoseArray()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self._frame
-        msg.poses.append(self._right_pose)  # poses[0] = right EE
-        msg.poses.append(self._left_pose)   # poses[1] = left EE
+        msg.poses.append(self._left_pose)   # poses[0] = left EE
+        msg.poses.append(self._right_pose)  # poses[1] = right EE
         self._pub.publish(msg)
 
     def _on_feedback(self, feedback: InteractiveMarkerFeedback) -> None:

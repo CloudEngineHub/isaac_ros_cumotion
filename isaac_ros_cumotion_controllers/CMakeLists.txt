@@ -36,16 +36,12 @@ endif()
 get_filename_component(cumotion_DIR "${CUMOTION_CONFIG_FILE}" DIRECTORY)
 find_package(cumotion REQUIRED CONFIG)
 
-# Additional non-ament dependencies.
-find_package(pinocchio REQUIRED)
-
 # Controllers library.
 ament_auto_add_library(isaac_ros_cumotion_controllers SHARED
   src/bimanual_ik_controller.cpp
 )
 target_link_libraries(isaac_ros_cumotion_controllers
   cumotion::cumotion
-  pinocchio::pinocchio
 )
 set_target_properties(isaac_ros_cumotion_controllers PROPERTIES
   BUILD_WITH_INSTALL_RPATH TRUE

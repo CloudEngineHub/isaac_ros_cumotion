@@ -1,4 +1,5 @@
-// Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,7 +28,6 @@
 #include "controller_interface/controller_interface.hpp"
 #include "geometry_msgs/msg/pose.hpp"
 #include "geometry_msgs/msg/pose_array.hpp"
-#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "std_msgs/msg/header.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/state.hpp"
@@ -39,10 +39,7 @@
 #include "cumotion/robot_description.h"
 #include "cumotion/rmpflow.h"
 #include "cumotion/world.h"
-#include "pinocchio/algorithm/rnea.hpp"
-#include "pinocchio/multibody/data.hpp"
-#include "pinocchio/multibody/model.hpp"
-#include "pinocchio/parsers/urdf.hpp"
+#include "isaac_ros_inverse_dynamics/inverse_dynamics_solver.hpp"
 #include "realtime_tools/realtime_buffer.hpp"
 
 namespace nvidia
@@ -54,13 +51,14 @@ namespace cumotion_controllers
 
 using PoseData = std::pair<Eigen::Vector3d, Eigen::Quaterniond>;
 
-struct PoseTargets {
+struct PoseTargets
+{
   std::optional<PoseData> right{};
   std::optional<PoseData> left{};
 };
 
 /* Bimanual IK controller using cuMotion RMPflow for joint acceleration generation.
- * Subscribes to ~/reference_pose (PoseArray): poses[0] = right EE, poses[1] = left EE.
+ * Subscribes to ~/reference_pose (PoseArray): poses[0] = left EE, poses[1] = right EE.
  * Writes position/velocity/effort commands to hardware interfaces. */
 class BimanualIkController : public controller_interface::ControllerInterface
 {
@@ -102,20 +100,14 @@ private:
   std::string right_ee_command_frame_name_{};
   std::string base_frame_{};
 
-  // Inverse dynamics (Pinocchio RNEA)
-  struct PinMapping { int ctrl_idx; int pin_v_idx; };
-  std::vector<PinMapping> pin_mappings_{};
-  pinocchio::Model pin_model_{};
-  pinocchio::Data pin_data_{};
-  // Full-model state vectors — non-controlled joints held at zero (zeroed once on activation).
-  Eigen::VectorXd q_full_{};
-  Eigen::VectorXd v_full_{};
-  Eigen::VectorXd a_full_{};
+  // RNEA feedforward. Safety controller gravity comp overwrites effort for its joints.
+  std::unique_ptr<isaac_ros_inverse_dynamics::InverseDynamicsSolver> id_solver_{};
   // Per-controller-joint feedforward torque — zeroed on activation, overwritten each cycle.
   Eigen::VectorXd tau_ff_{};
 
   // Hardware interface index maps — built once in on_activate
-  struct HardwareIndexMaps {
+  struct HardwareIndexMaps
+  {
     std::vector<size_t> pos_state{};
     std::vector<size_t> vel_state{};
     std::vector<size_t> pos_cmd{};
@@ -130,19 +122,18 @@ private:
   Eigen::VectorXd joint_position_{};
   Eigen::VectorXd joint_velocity_{};
   Eigen::VectorXd joint_accel_{};
-  
-  // Integrated state — open-loop integration of RMPflow output;
-  // reset to hardware on activation only.
+
   Eigen::VectorXd joint_position_integrated_{};
   Eigen::VectorXd joint_velocity_integrated_{};
 
-  // ROS communication
   rclcpp::Subscription<geometry_msgs::msg::PoseArray>::SharedPtr pose_sub_{nullptr};
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_{nullptr};
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
   realtime_tools::RealtimeBuffer<PoseTargets> pose_targets_buffer_{};
 
   // Helpers
+  // Set the RMPflow joint-velocity cap and derive its braking-ramp width.
+  static void ApplyVelocityCap(cumotion::RmpFlowConfig & config, double max_velocity);
   std::string MakeCommandInterfaceName(
     const std::string & joint, const std::string & iface) const;
   std::optional<PoseData> ExtractAndTransformPose(
